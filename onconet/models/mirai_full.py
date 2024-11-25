@@ -220,7 +220,7 @@ class MiraiModel:
 
         return batch
 
-    def run_model(self, dicom_files: List[BinaryIO], payload=None):
+    def run_model(self, dicom_files: List[BinaryIO], payload=None, is_dicom=True):
         logger = get_logger()
         _torch_set_num_threads(getattr(self.args, 'threads', 0))
         if payload is None:
@@ -236,7 +236,7 @@ class MiraiModel:
 
         images = []
         dicom_info = {}
-        if dicom_files[0].endswith('.dcm'):
+        if is_dicom:
             for dicom in dicom_files:
                 try:
                     cur_dicom = pydicom.dcmread(dicom, force=dcmread_force, stop_before_pixels=True)
@@ -283,7 +283,7 @@ class MiraiModel:
                 except Exception as e:
                     logger.warning(f"{type(e).__name__}: {e}")
                     logger.warning(f"{traceback.format_exc()}")
-        elif dicom_files[0].ends_with('.png'):
+        elif not is_dicom:
             for png in dicom_files:
                 view, side = png.replace('.png', '').split('_')[2:]
                 dicom_info[(view, side)] = png
