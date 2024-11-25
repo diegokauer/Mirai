@@ -34,7 +34,8 @@ class RiskFactorPool(AbstractPool):
         return False
 
     def forward(self, x, risk_factors):
-
+        # print('IN: risk_factor_pool', x.size())
+        # print(self.args.pool_name)
         if self.args.replace_snapshot_pool:
             x = x.data
         _, hidden = self.internal_pool(x)
@@ -69,6 +70,7 @@ class RiskFactorPool(AbstractPool):
         risk_factors_hidden = torch.cat(risk_factors, dim=1) if risk_factors_hidden is None else risk_factors_hidden
         hidden = torch.cat((hidden, risk_factors_hidden), 1)
         hidden = self.dropout(hidden)
+        # print('OUT: risk_factor_pool', hidden.size())
         return None, hidden
 
 

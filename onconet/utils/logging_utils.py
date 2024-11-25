@@ -22,13 +22,14 @@ def remove_all_handlers(logger):
         except IndexError:
             break
 
-
-def configure_logger(loglevel=None, logger_name=LOGGER_NAME, logfile=None):
+'C:/Users/Usuario/Documents/MirAI/mirai.log'
+def configure_logger(loglevel=None, logger_name=LOGGER_NAME, logfile='C:/Users/Usuario/Documents/MirAI/mirai.log'): # CAMBIAR
     """Do basic logger configuration and set our main logger"""
 
     # Set as environment variable so other processes can retrieve it
     if loglevel is None:
         loglevel = os.environ.get(LOGLEVEL_KEY, "WARNING")
+        loglevel = 'DEBUG' # CAMBIAR
     else:
         os.environ[LOGLEVEL_KEY] = loglevel
 

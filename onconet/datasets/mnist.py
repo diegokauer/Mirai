@@ -3,6 +3,7 @@ from torch.utils import data
 from torchvision import datasets
 from PIL import Image
 import numpy as np
+import skimage
 from scipy.stats import multivariate_normal
 from onconet.datasets.factory import RegisterDataset
 from random import shuffle
@@ -10,11 +11,6 @@ import numpy as np
 from PIL import Image
 import warnings
 warnings.simplefilter("ignore")
-
-try:
-    import skimage
-except ImportError:
-    print(f"skimage not found, install with 'pip install scikit-image' to use MNIST dataset")
 
 @RegisterDataset("mnist")
 class MNIST_Dataset(data.Dataset):

@@ -3,7 +3,6 @@ import argparse
 import io
 import json
 import os
-import pprint
 from typing import List
 
 import onconet.utils.dicom
@@ -33,9 +32,6 @@ def _get_parser():
     parser.add_argument('--use-pydicom', default=False, action="store_true",
                         help="Use pydicom instead of dcmtk to read DICOM files.")
 
-    parser.add_argument('--window-method', default="minmax", choices=["minmax", "auto"],
-                        help="Windowing method to use for preprocessing with pydicom.")
-
     parser.add_argument('--dry-run', default=False, action="store_true",
                         help="Load model and configuration, but don't actually do any predictions. "
                              "Useful for checking environment and downloading models.")
@@ -64,7 +60,7 @@ def _load_config(config_path, **kwargs):
 
 
 def predict(dicom_files: List[str], config_path: str, output_path=None, use_pydicom=False,
-            threads=0, dry_run=False, window_method='minmax') -> dict:
+            threads=0, dry_run=False):
     logger = logging_utils.get_logger()
 
     config = _load_config(config_path, threads=threads)
@@ -88,33 +84,33 @@ def predict(dicom_files: List[str], config_path: str, output_path=None, use_pydi
             logger.warning("DCMTK not found. Using pydicom.")
             use_pydicom = True
 
+
     # Load DICOM files into memory
     def load_binary(_dicom_file) -> io.BytesIO:
         with open(_dicom_file, 'rb') as _fi:
             return io.BytesIO(_fi.read())
 
     dicom_data_list = [load_binary(dicom_file) for dicom_file in dicom_files]
-    payload = {"dcmtk": not use_pydicom, "window_method": window_method}
-    model_output_dict = model.run_model(dicom_data_list, payload=payload)
-    model_output_dict["modelVersion"] = model.__version__
+    payload = {"dcmtk": not use_pydicom}
+    prediction = model.run_model(dicom_data_list, payload=payload)
 
     logger.info(f"Finished prediction version {model.__version__}")
     if output_path is not None:
         logger.info(f"Saving prediction to {output_path}")
         with open(output_path, 'w') as f:
-            json.dump(model_output_dict, f, indent=2)
+            json.dump(prediction, f, indent=2)
 
-    return model_output_dict
+    return prediction
 
 
 def main():
     args = _get_parser().parse_args()
     logging_utils.configure_logger(args.loglevel)
 
-    model_output_dict = predict(args.dicoms, args.config, args.output_path, args.use_pydicom,
-                                threads=args.threads, dry_run=args.dry_run)
-    if model_output_dict:
-        pprint.pprint(model_output_dict)
+    prediction = predict(args.dicoms, args.config, args.output_path, args.use_pydicom,
+                         threads=args.threads, dry_run=args.dry_run)
+    if prediction:
+        print(prediction)
 
 
 if __name__ == "__main__":

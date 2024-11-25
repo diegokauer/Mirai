@@ -15,7 +15,7 @@ if __name__ == "__main__":
     # - max_batches_per_epoch
     # - train_years
     # - dev_years
-    # - test_years
+    # - test_years'
 
     args = parse_args()
     means, stds = get_dataset_stats(args)

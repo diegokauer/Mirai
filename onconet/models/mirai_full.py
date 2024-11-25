@@ -151,7 +151,16 @@ class MiraiModel:
 
         risk_factors = autograd.Variable(risk_factor_vector.unsqueeze(0)) if risk_factor_vector is not None else None
 
+        batch['x'].requires_grad_() # OJOO
+
         logit, _, _ = model(batch['x'], risk_factors, batch)
+        # print(batch)
+        # print(logit)
+        if False:
+            logit[0, 0].backward()
+            torch.save(batch['x'].grad.data, 'C:/Users/Usuario/Documents/MirAI/grad.pt')
+        # print(batch['x'].grad.data.size()) # OJOO
+
         probs = F.sigmoid(logit).cpu().data.numpy()
         pred_y = np.zeros(probs.shape[1])
 
@@ -203,7 +212,6 @@ class MiraiModel:
         if payload is None:
             payload = dict()
 
-        dcmread_force = payload.get("dcmread_force", False)
         dcmtk_installed = onconet.utils.dicom.is_dcmtk_installed()
         use_dcmtk = payload.get("dcmtk", True) and dcmtk_installed
         if use_dcmtk:
@@ -215,8 +223,7 @@ class MiraiModel:
         dicom_info = {}
         for dicom in dicom_files:
             try:
-                tmp_dcm = pydicom.dcmread(dicom, force=dcmread_force, stop_before_pixels=True)
-                view, side = onconet.utils.dicom.get_dicom_info(tmp_dcm)
+                view, side = onconet.utils.dicom.get_dicom_info(pydicom.dcmread(dicom))
 
                 if (view, side) in dicom_info:
                     prev_dicom = dicom_info[(view, side)]
@@ -228,15 +235,14 @@ class MiraiModel:
                 else:
                     dicom_info[(view, side)] = dicom
             except Exception as e:
-                logger.warning(f"Error reading DICOM: {e}")
-                logger.warning(f"{traceback.format_exc()}")
+                logger.warning("{}: {}".format(type(e).__name__, e))
 
         for k in dicom_info:
             try:
                 dicom = dicom_info[k]
                 dicom.seek(0)
                 view, side = k
-
+                print('dcmtk:', use_dcmtk)
                 if use_dcmtk:
                     dicom_file = tempfile.NamedTemporaryFile(suffix='.dcm')
                     image_file = tempfile.NamedTemporaryFile(suffix='.png')
@@ -251,9 +257,8 @@ class MiraiModel:
                     logger.debug('Image mode from dcmtk: {}'.format(image.mode))
                     images.append({'x': image, 'side_seq': side, 'view_seq': view})
                 else:
-                    dicom = pydicom.dcmread(dicom, force=dcmread_force)
-                    window_method = payload.get("window_method", "minmax")
-                    image = onconet.utils.dicom.dicom_to_arr(dicom, window_method=window_method, pillow=True)
+                    dicom = pydicom.dcmread(dicom)
+                    image = onconet.utils.dicom.dicom_to_arr(dicom, pillow=True)
                     logger.debug('Image mode from dicom: {}'.format(image.mode))
                     images.append({'x': image, 'side_seq': side, 'view_seq': view})
             except Exception as e:

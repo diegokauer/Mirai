@@ -6,8 +6,6 @@ numpy==1.24.*
 Pillow==9.0.0
 pydicom==2.3.0
 scipy==1.7.3
-torch==1.9.0
-torchvision==0.10.0
 tqdm==4.62.3
 # Train/test only
 scikit-image==0.18.2

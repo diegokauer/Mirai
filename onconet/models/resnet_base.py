@@ -192,7 +192,8 @@ class ResNet(nn.Module):
         Returns:
             The result of feeding the input through the model.
         """
-
+        # print('IN: resnet', x.size(), self.args.pool_name)
+        # torch.save(x, 'in_images.pt')
         # Go through all layers up to fc
         if self.args.use_precomputed_hiddens:
             x = x.transpose(2,1)
@@ -204,12 +205,15 @@ class ResNet(nn.Module):
             for name in layers:
                 layer = self._modules[name]
                 x = layer(x)
+                # print(name, x.size())
         logit, hidden = self.aggregate_and_classify(x, risk_factors=risk_factors)
+        # print('OUT: resnet', logit.size(), hidden.size())
         activ_dict = {'activ':x}
         if self.args.use_region_annotation:
             activ_dict['region_logit'] = self.region_fc(x)
         if self.args.predict_birads:
             activ_dict['birads_logit'] = self.birads_fc(hidden)
+
 
         if self.args.pred_risk_factors:
             try:
@@ -223,11 +227,13 @@ class ResNet(nn.Module):
 
 
     def aggregate_and_classify(self, x, risk_factors=None):
+        # print('agg_and_cls', x.size()[:2], self.args.use_risk_factors)
         # Pooling layer
         if self.args.use_risk_factors:
             logit, hidden = self.pool(x, risk_factors)
         else:
             logit, hidden = self.pool(x)
+
 
         if not self.pool.replaces_fc():
             # self.fc is always on last gpu, so direct call of fc(x) is safe
@@ -238,6 +244,8 @@ class ResNet(nn.Module):
                 pass
             hidden = self.dropout(hidden)
             logit = self.fc(hidden)
+
+
 
         if self.args.survival_analysis_setup:
             logit = self.prob_of_failure_layer(hidden)
