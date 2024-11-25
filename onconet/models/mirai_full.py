@@ -237,7 +237,7 @@ class MiraiModel:
         images = []
         dicom_info = {}
         if is_dicom:
-            for dicom in dicom_files:
+            for dicom, _ in dicom_files:
                 try:
                     cur_dicom = pydicom.dcmread(dicom, force=dcmread_force, stop_before_pixels=True)
                     view, side = onconet.utils.dicom.get_dicom_info(cur_dicom)
@@ -284,8 +284,8 @@ class MiraiModel:
                     logger.warning(f"{type(e).__name__}: {e}")
                     logger.warning(f"{traceback.format_exc()}")
         elif not is_dicom:
-            for png in dicom_files:
-                view, side = png.name.replace('.png', '').split('_')[2:]
+            for png, png_name in dicom_files:
+                view, side = png_name.replace('.png', '').split('_')[2:]
                 dicom_info[(view, side)] = png
 
             for k in dicom_info:

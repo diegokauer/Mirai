@@ -95,7 +95,7 @@ def _predict_single(dicom_files: List[str], model, use_dcmtk, window_method):
             logger.warning("DCMTK not found. Using pydicom.")
             use_dcmtk = False
 
-    dicom_data_list = [_load_binary(dicom_file) for dicom_file in dicom_files]
+    dicom_data_list = [(_load_binary(dicom_file), dicom_file) for dicom_file in dicom_files]
     payload = {"dcmtk": use_dcmtk, "window_method": window_method}
     with torch.no_grad():
         model_output_dict = model.run_model(dicom_data_list, payload=payload, is_dicom=dicom_file.endswith('.dcm'))
