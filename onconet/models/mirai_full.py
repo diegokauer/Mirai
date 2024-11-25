@@ -289,7 +289,7 @@ class MiraiModel:
 
                 view = 0 if view_str == 'CC' else 1
                 side = 0 if side_str == 'R' else 1
-                
+
                 dicom_info[(view, side)] = png
 
             for k in dicom_info:
