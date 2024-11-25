@@ -291,9 +291,11 @@ class MiraiModel:
             for k in dicom_info:
                 try:
                     png = dicom_info[k]
+                    print('seek')
                     png.seek(0)
                     view, side = k
                     image = onconet.utils.dicom.png_to_arr(png)
+                    print('png_to_arr')
                     logger.debug('Image mode from PNG: {}'.format(image.mode))
                     images.append({'x': image, 'side_seq': side, 'view_seq': view})
                 except Exception as e:
