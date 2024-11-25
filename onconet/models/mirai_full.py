@@ -285,7 +285,11 @@ class MiraiModel:
                     logger.warning(f"{traceback.format_exc()}")
         elif not is_dicom:
             for png, png_name in dicom_files:
-                view, side = png_name.replace('.png', '').split('_')[2:]
+                view_str, side_str = png_name.replace('.png', '').split('_')[2:]
+
+                view = 0 if view_str == 'CC' else 1
+                side = 0 if side_str == 'R' else 1
+                
                 dicom_info[(view, side)] = png
 
             for k in dicom_info:
