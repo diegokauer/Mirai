@@ -1,3 +1,4 @@
+import functools
 import logging
 import os
 import pickle
@@ -95,8 +96,26 @@ class MiraiModel:
         super().__init__()
         self.args = self.sanitize_paths(config_obj)
         self.__version__ = onconet_version
+        self._model = None
+        self._calibrator = None
+        self._device = None
+
+    def to(self, device):
+        if self._model:
+            self._model.to(device)
+            self._model.transformer.to(device)
+        self._device = device
+        return self
+
+    def get_device(self):
+        if self._device:
+            return self._device
+        return get_default_device()
 
     def load_model(self):
+        if self._model:
+            return self._model
+
         logger = get_logger()
         logger.debug("Loading model...")
         self.args.cuda = self.args.cuda and torch.cuda.is_available()
@@ -120,9 +139,13 @@ class MiraiModel:
             logger.debug("Exception caught, skipping precomputed hiddens")
             pass
 
+        self._model = model
         return model
 
     def load_calibrator(self):
+        if self._calibrator:
+            return self._calibrator
+
         get_logger().debug("Loading calibrator...")
 
         # Load calibrator if desired
@@ -132,6 +155,7 @@ class MiraiModel:
         else:
             calibrator = None
 
+        self._calibrator = calibrator
         return calibrator
 
     def process_image_joint(self, batch, model, calibrator, risk_factor_vector=None):
@@ -139,10 +163,9 @@ class MiraiModel:
         logger.debug("Getting predictions...")
 
         if self.args.cuda:
-            device = get_default_device()
+            device = self.get_device()
             logger.debug(f"Inference with {device}")
-            for obj in [model, model.transformer]:
-                obj.to(device)
+            self.to(device)
             for key, val in batch.items():
                 batch[key] = val.to(device)
         else:
@@ -151,16 +174,7 @@ class MiraiModel:
 
         risk_factors = autograd.Variable(risk_factor_vector.unsqueeze(0)) if risk_factor_vector is not None else None
 
-        batch['x'].requires_grad_() # OJOO
-
         logit, _, _ = model(batch['x'], risk_factors, batch)
-        # print(batch)
-        # print(logit)
-        if False:
-            logit[0, 0].backward()
-            torch.save(batch['x'].grad.data, 'C:/Users/Usuario/Documents/MirAI/grad.pt')
-        # print(batch['x'].grad.data.size()) # OJOO
-
         probs = F.sigmoid(logit).cpu().data.numpy()
         pred_y = np.zeros(probs.shape[1])
 
@@ -212,58 +226,79 @@ class MiraiModel:
         if payload is None:
             payload = dict()
 
+        dcmread_force = payload.get("dcmread_force", False)
         dcmtk_installed = onconet.utils.dicom.is_dcmtk_installed()
-        use_dcmtk = payload.get("dcmtk", True) and dcmtk_installed
+        use_dcmtk = payload.get("dcmtk", False) and dcmtk_installed
         if use_dcmtk:
-            logger.info('Using dcmtk')
+            logger.debug('Using dcmtk')
         else:
-            logger.info('Using pydicom')
+            logger.debug('Using pydicom')
 
         images = []
         dicom_info = {}
-        for dicom in dicom_files:
-            try:
-                view, side = onconet.utils.dicom.get_dicom_info(pydicom.dcmread(dicom))
+        if dicom_files[0].endswith('.dcm'):
+            for dicom in dicom_files:
+                try:
+                    cur_dicom = pydicom.dcmread(dicom, force=dcmread_force, stop_before_pixels=True)
+                    view, side = onconet.utils.dicom.get_dicom_info(cur_dicom)
 
-                if (view, side) in dicom_info:
-                    prev_dicom = dicom_info[(view, side)]
-                    prev = int(prev_dicom[0x0008, 0x0023].value + prev_dicom[0x0008, 0x0033].value)
-                    cur = int(dicom[0x0008, 0x0023].value + dicom[0x0008, 0x0033].value)
+                    if (view, side) in dicom_info:
+                        prev_dicom = pydicom.dcmread(dicom_info[(view, side)], force=dcmread_force, stop_before_pixels=True)
+                        prev = int(prev_dicom[0x0008, 0x0023].value + prev_dicom[0x0008, 0x0033].value)
+                        cur = int(cur_dicom[0x0008, 0x0023].value + cur_dicom[0x0008, 0x0033].value)
 
-                    if cur > prev:
+                        if cur > prev:
+                            dicom_info[(view, side)] = dicom
+                    else:
                         dicom_info[(view, side)] = dicom
-                else:
-                    dicom_info[(view, side)] = dicom
-            except Exception as e:
-                logger.warning("{}: {}".format(type(e).__name__, e))
+                except Exception as e:
+                    logger.warning(f"Error reading DICOM: {e}")
+                    logger.warning(f"{traceback.format_exc()}")
 
-        for k in dicom_info:
-            try:
-                dicom = dicom_info[k]
-                dicom.seek(0)
-                view, side = k
-                print('dcmtk:', use_dcmtk)
-                if use_dcmtk:
-                    dicom_file = tempfile.NamedTemporaryFile(suffix='.dcm')
-                    image_file = tempfile.NamedTemporaryFile(suffix='.png')
-                    dicom_path = dicom_file.name
-                    image_path = image_file.name
-                    logger.debug("Temp DICOM path: {}".format(dicom_path))
-                    logger.debug("Temp image path: {}".format(image_path))
+            for k in dicom_info:
+                try:
+                    dicom = dicom_info[k]
+                    dicom.seek(0)
+                    view, side = k
 
-                    dicom_file.write(dicom.read())
+                    if use_dcmtk:
+                        dicom_file = tempfile.NamedTemporaryFile(suffix='.dcm')
+                        image_file = tempfile.NamedTemporaryFile(suffix='.png')
+                        dicom_path = dicom_file.name
+                        image_path = image_file.name
+                        logger.debug("Temp DICOM path: {}".format(dicom_path))
+                        logger.debug("Temp image path: {}".format(image_path))
 
-                    image = onconet.utils.dicom.dicom_to_image_dcmtk(dicom_path, image_path)
-                    logger.debug('Image mode from dcmtk: {}'.format(image.mode))
+                        dicom_file.write(dicom.read())
+
+                        image = onconet.utils.dicom.dicom_to_image_dcmtk(dicom_path, image_path)
+                        logger.debug('Image mode from dcmtk: {}'.format(image.mode))
+                        images.append({'x': image, 'side_seq': side, 'view_seq': view})
+                    else:
+                        dicom = pydicom.dcmread(dicom, force=dcmread_force)
+                        window_method = payload.get("window_method", "minmax")
+                        image = onconet.utils.dicom.dicom_to_arr(dicom, window_method=window_method, pillow=True)
+                        logger.debug('Image mode from dicom: {}'.format(image.mode))
+                        images.append({'x': image, 'side_seq': side, 'view_seq': view})
+                except Exception as e:
+                    logger.warning(f"{type(e).__name__}: {e}")
+                    logger.warning(f"{traceback.format_exc()}")
+        elif dicom_files[0].ends_with('.png'):
+            for png in dicom_files:
+                view, side = png.replace('.png', '').split('_')[2:]
+                dicom_info[(view, side)] = png
+
+            for k in dicom_info:
+                try:
+                    png = dicom_info[k]
+                    png.seek(0)
+                    view, side = k
+                    image = onconet.utils.dicom.png_to_arr(png)
+                    logger.debug('Image mode from PNG: {}'.format(image.mode))
                     images.append({'x': image, 'side_seq': side, 'view_seq': view})
-                else:
-                    dicom = pydicom.dcmread(dicom)
-                    image = onconet.utils.dicom.dicom_to_arr(dicom, pillow=True)
-                    logger.debug('Image mode from dicom: {}'.format(image.mode))
-                    images.append({'x': image, 'side_seq': side, 'view_seq': view})
-            except Exception as e:
-                logger.warning(f"{type(e).__name__}: {e}")
-                logger.warning(f"{traceback.format_exc()}")
+                except Exception as e:
+                    logger.warning(f"{type(e).__name__}: {e}")
+                    logger.warning(f"{traceback.format_exc()}")
 
         risk_factor_vector = None
 
@@ -296,16 +331,21 @@ class MiraiModel:
         if getattr(args, 'remote_snapshot_uri', None) is None:
             return
 
-        get_logger().info(f"Local models not found, downloading snapshot from remote URI: {args.remote_snapshot_uri}")
+        logger = get_logger()
+        logger.info(f"Local models not found, downloading snapshot from remote URI: {args.remote_snapshot_uri}")
         os.makedirs(cache_dir, exist_ok=True)
         tmp_zip_path = os.path.join(cache_dir, "snapshots.zip")
         if not os.path.exists(tmp_zip_path):
+            logger.debug(f"Downloading snapshot to {tmp_zip_path}")
             download_file(args.remote_snapshot_uri, tmp_zip_path)
+        else:
+            logger.debug(f"Snapshot already downloaded to {tmp_zip_path}")
 
         dest_dir = os.path.dirname(args.img_encoder_snapshot) if args.model_name == 'mirai_full' else os.path.dirname(args.snapshot)
+        os.makedirs(dest_dir, exist_ok=True)
 
         # Unzip file
-        get_logger().info(f"Saving models to {dest_dir}")
+        logger.debug(f"Saving models to {dest_dir}")
         with zipfile.ZipFile(tmp_zip_path, 'r') as zip_ref:
             zip_ref.extractall(dest_dir)
 

@@ -19,19 +19,13 @@ class Simple_AttentionPool(AbstractPool):
         return False
 
     def forward(self, x):
-        # print('IN: simple_attention_pool', x.size())
         #X dim: B, C, W, H
         spatially_flat_size = (*x.size()[:2], -1) #B, C, N
         x = x.view(spatially_flat_size)
         attention_scores = self.attention_fc(x.transpose(1,2)) #B, N, 1
-        # print('MID: attention_scores', attention_scores.size())
-        attention_scores = self.softmax(attention_scores.transpose(1,2)) #B, 1, N
-        # print('MID: attention_scores', attention_scores.size())
-
-
+        attention_scores = self.softmax( attention_scores.transpose(1,2)) #B, 1, N
         x = x * attention_scores #B, C, N
         x = torch.sum(x, dim=-1)
-        # print('OUT: simple_attention_pool', x.size())
         return None, x
 
 
@@ -76,7 +70,6 @@ class AttentionPool2d(AbstractPool):
         return attention
 
     def forward(self, x):
-        # print('IN: attention_pool_2d', x.size())
         B = x.size()[0]
         num_dim = len(x.size())
         attention = self.compute_attention(x)
@@ -97,5 +90,4 @@ class AttentionPool2d(AbstractPool):
         logit = logit.sum(-1)  # (B, K)
 
         hidden = attended.view(B, -1)
-        # print('IN: attention_pool_2d', logit.size(), hidden.size())
         return logit, hidden

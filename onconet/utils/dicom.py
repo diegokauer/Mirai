@@ -68,7 +68,7 @@ def is_dcmtk_installed():
         return False
 
 
-def dicom_to_image_dcmtk(dicom_path, image_path):
+def dicom_to_image_dcmtk(dicom_path, image_path, pillow=False):
     """Converts a dicom image to a grayscale 16-bit png image using dcmtk.
 
     Convert DICOM to PNG using dcmj2pnm (support.dcmtk.org/docs/dcmj2pnm.html)
@@ -98,26 +98,9 @@ def dicom_to_image_dcmtk(dicom_path, image_path):
     elif 'C-View' in ser_desc and voi_lut_exists:
         logger.debug("SeriesDescription contains C-View and VOI LUT exists, using VOI LUT")
         args = ['dcmj2pnm', '+on2', '--grayscale', '+Ww', default_window_center, default_window_width, dicom_path, image_path]
-    elif 'VOILUTFunction' in dcm_file:
-        if dcm_file.VOILUTFunction == 'LINEAR':
-            logger.debug("Linear VOILUT (LINEAR)")
-            args = ['dcmj2pnm', '+on2', '--grayscale', '--linear-function', '--use-window', '1', dicom_path, image_path]
-        if dcm_file.VOILUTFunction == 'SIGMOID':
-            logger.debug("Sigmoid VOILUT")
-            args = ['dcmj2pnm', '+on2', '--grayscale', '--sigmoid-function', '--use-window', '1', dicom_path, image_path]
-    elif (0x0028, 0x1056) in dcm_file:
-        if dcm_file[0x0028, 0x1056] == 'LIN':
-            logger.debug("Linear VOILUT (LIN)")
-            args = ['dcmj2pnm', '+on2', '--grayscale', '--linear-function', '--use-window', '1', dicom_path, image_path]
-    elif (0x0028, 0x1055) in dcm_file:
-        if 'linear' in dcm_file[0x0028, 0x1055]:
-            logger.debug("Linear VOILUT (linear)")
-            args = ['dcmj2pnm', '+on2', '--grayscale', '--linear-function', '--use-window', '1', dicom_path, image_path]
     else:
-        logger.debug(
-            "Manufacturer not GE or C-View/VOI LUT doesn't exist, defaulting to min-max window algorithm")
+        logger.debug("Manufacturer not GE or C-View/VOI LUT doesn't exist, defaulting to min-max window algorithm")
         args = ['dcmj2pnm', '+on2', '--min-max-window', '--grayscale', dicom_path, image_path]
-
 
     level_name = logging.getLevelName(logger.level).lower().replace("warning", "warn")
     if level_name in {"fatal", "error", "warn", "info", "debug", "trace"}:
@@ -129,70 +112,36 @@ def dicom_to_image_dcmtk(dicom_path, image_path):
     if output.stderr:
         logger.debug(output.stderr.decode('utf-8'))
 
-    return Image.open(image_path)
+    image = Image.open(image_path).convert('I')
+    if pillow:
+        image = np.array(image).astype(np.int32)
+        if image.shape[-1] in {3, 4}:
+            image = image.mean(axis=-1, dtype=np.int32)
+        return Image.fromarray(image, mode='I')
+    else:
+        return image
+
+
+def png_to_arr(png):
+    image = Image.open(png)
+    image = np.array(image).astype(np.int32)
+    return Image.fromarray(image, mode='I')
 
 
 def dicom_to_arr(dicom, window_method='minmax', index=0, pillow=False, overlay=False):
     logger = get_logger()
-    image = apply_modality_lut(dicom.pixel_array, dicom)
 
-    if (0x0028, 0x1056) in dicom:
-        voi_type = dicom[0x0028, 0x1056].value
-    else:
-        voi_type = 'LINEAR'
+    manufacturer = dicom[0x0008, 0x0070].value
+    presentation = 'IDENTITY'
+    if (0x2050, 0x0020) in dicom:
+        presentation = dicom[0x2050, 0x0020].value
 
-    manufacturer = getattr(dicom, 'Manufacturer', 'Unknown Manufacturer')
-    if 'GE' in manufacturer and (0x0028, 0x3010) in dicom:
-        logger.debug('GE dicom_to_arr conversion')
-        image = apply_voi_lut(image.astype(np.uint16), dicom, index=index)
-        num_bits = dicom[0x0028, 0x3010].value[index][0x0028, 0x3002].value[2]
-        image *= 2**(16 - num_bits)
-    else:
-        image = apply_voi_lut(image.astype(np.uint16), dicom, index=index)
-    # elif window_method == 'auto':
-    #     logger.debug('auto dicom_to_arr conversion')
-    #     window_center = -600
-    #     window_width = 1500
-    #     # Use the window center and width from the DICOM header if available
-    #     if (0x0028, 0x1050) in dicom:
-    #         window_center = dicom[0x0028, 0x1050].value
-    #         window_width = dicom[0x0028, 0x1051].value
-    #
-    #     logger.debug(f"auto window center: {window_center}, window width: {window_width}")
-    #
-    #     image = apply_windowing(image, window_center, window_width, voi_type=voi_type)
-    # elif window_method == 'minmax':
-    #     logger.debug('minmax dicom_to_arr conversion')
-    #     min_pixel = np.min(image)
-    #     max_pixel = np.max(image)
-    #     window_center = (min_pixel + max_pixel + 1) / 2
-    #     window_width = max_pixel - min_pixel + 1
-    #     logger.debug(f"minmax window center: {window_center}, window width: {window_width}")
-    #
-    #     image = apply_windowing(image, window_center, window_width, voi_type=voi_type)
-    # else:
-    #     raise ValueError(f"Invalid window_method: {window_method}")
+    pixels = dicom.pixel_array
 
-    image = image.astype(np.uint16)
-
-    if overlay:
-        arr = dicom.overlay_array(0x6000)
-        old_shape = arr.shape
-        arr = arr.flatten()
-
-        arr = np.append(arr, np.array([0] * 4))
-        arr = arr.reshape((len(arr) // 16, 16))
-
-        for i in range(arr.shape[0]):
-            if 1 not in arr[i]:
-                continue
-            arr[i] = np.roll(arr[i], 8)
-
-        arr = arr.flatten()
-
-        arr = arr[:-4].reshape(old_shape)
-        num_bits = dicom[0x0028, 0x3010].value[index][0x0028, 0x3002].value[2]
-        image[arr == 1] = 2 ** 16 - 1
+    if presentation == 'INVERSE':
+        logger.debug("Using Inverse Presentation")
+        pixels = (dicom.WindowCenter + dicom.WindowWidth) - pixels
+    image = apply_voi_lut(pixels, dicom, index)
 
     if pillow:
         image = image.astype(np.int32)
