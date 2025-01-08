@@ -220,7 +220,7 @@ class MiraiModel:
 
         return batch
 
-    def run_model(self, dicom_files: List[BinaryIO], payload=None):
+    def run_model(self, dicom_files: List[BinaryIO], payload=None, is_dicom=True):
         logger = get_logger()
         _torch_set_num_threads(getattr(self.args, 'threads', 0))
         if payload is None:
@@ -236,52 +236,73 @@ class MiraiModel:
 
         images = []
         dicom_info = {}
-        for dicom in dicom_files:
-            try:
-                cur_dicom = pydicom.dcmread(dicom, force=dcmread_force, stop_before_pixels=True)
-                view, side = onconet.utils.dicom.get_dicom_info(cur_dicom)
+        if is_dicom:
+            for dicom, _ in dicom_files:
+                try:
+                    cur_dicom = pydicom.dcmread(dicom, force=dcmread_force, stop_before_pixels=True)
+                    view, side = onconet.utils.dicom.get_dicom_info(cur_dicom)
 
-                if (view, side) in dicom_info:
-                    prev_dicom = pydicom.dcmread(dicom_info[(view, side)], force=dcmread_force, stop_before_pixels=True)
-                    prev = int(prev_dicom[0x0008, 0x0023].value + prev_dicom[0x0008, 0x0033].value)
-                    cur = int(cur_dicom[0x0008, 0x0023].value + cur_dicom[0x0008, 0x0033].value)
+                    if (view, side) in dicom_info:
+                        prev_dicom = pydicom.dcmread(dicom_info[(view, side)], force=dcmread_force, stop_before_pixels=True)
+                        prev = int(prev_dicom[0x0008, 0x0023].value + prev_dicom[0x0008, 0x0033].value)
+                        cur = int(cur_dicom[0x0008, 0x0023].value + cur_dicom[0x0008, 0x0033].value)
 
-                    if cur > prev:
+                        if cur > prev:
+                            dicom_info[(view, side)] = dicom
+                    else:
                         dicom_info[(view, side)] = dicom
-                else:
-                    dicom_info[(view, side)] = dicom
-            except Exception as e:
-                logger.warning(f"Error reading DICOM: {e}")
-                logger.warning(f"{traceback.format_exc()}")
+                except Exception as e:
+                    logger.warning(f"Error reading DICOM: {e}")
+                    logger.warning(f"{traceback.format_exc()}")
 
-        for k in dicom_info:
-            try:
-                dicom = dicom_info[k]
-                dicom.seek(0)
-                view, side = k
+            for k in dicom_info:
+                try:
+                    dicom = dicom_info[k]
+                    dicom.seek(0)
+                    view, side = k
 
-                if use_dcmtk:
-                    dicom_file = tempfile.NamedTemporaryFile(suffix='.dcm')
-                    image_file = tempfile.NamedTemporaryFile(suffix='.png')
-                    dicom_path = dicom_file.name
-                    image_path = image_file.name
-                    logger.debug("Temp DICOM path: {}".format(dicom_path))
-                    logger.debug("Temp image path: {}".format(image_path))
+                    if use_dcmtk:
+                        dicom_file = tempfile.NamedTemporaryFile(suffix='.dcm')
+                        image_file = tempfile.NamedTemporaryFile(suffix='.png')
+                        dicom_path = dicom_file.name
+                        image_path = image_file.name
+                        logger.debug("Temp DICOM path: {}".format(dicom_path))
+                        logger.debug("Temp image path: {}".format(image_path))
 
-                    dicom_file.write(dicom.read())
+                        dicom_file.write(dicom.read())
 
-                    image = onconet.utils.dicom.dicom_to_image_dcmtk(dicom_path, image_path)
-                    logger.debug('Image mode from dcmtk: {}'.format(image.mode))
+                        image = onconet.utils.dicom.dicom_to_image_dcmtk(dicom_path, image_path)
+                        logger.debug('Image mode from dcmtk: {}'.format(image.mode))
+                        images.append({'x': image, 'side_seq': side, 'view_seq': view})
+                    else:
+                        dicom = pydicom.dcmread(dicom, force=dcmread_force)
+                        window_method = payload.get("window_method", "minmax")
+                        image = onconet.utils.dicom.dicom_to_arr(dicom, window_method=window_method, pillow=True)
+                        logger.debug('Image mode from dicom: {}'.format(image.mode))
+                        images.append({'x': image, 'side_seq': side, 'view_seq': view})
+                except Exception as e:
+                    logger.warning(f"{type(e).__name__}: {e}")
+                    logger.warning(f"{traceback.format_exc()}")
+        elif not is_dicom:
+            for png, png_name in dicom_files:
+                view_str, side_str = png_name.replace('.png', '').split('_')[2:]
+
+                view = 0 if view_str == 'CC' else 1
+                side = 0 if side_str == 'R' else 1
+
+                dicom_info[(view, side)] = png
+
+            for k in dicom_info:
+                try:
+                    png = dicom_info[k]
+                    png.seek(0)
+                    view, side = k
+                    image = onconet.utils.dicom.png_to_arr(png)
+                    logger.debug('Image mode from PNG: {}'.format(image.mode))
                     images.append({'x': image, 'side_seq': side, 'view_seq': view})
-                else:
-                    dicom = pydicom.dcmread(dicom, force=dcmread_force)
-                    window_method = payload.get("window_method", "minmax")
-                    image = onconet.utils.dicom.dicom_to_arr(dicom, window_method=window_method, pillow=True)
-                    logger.debug('Image mode from dicom: {}'.format(image.mode))
-                    images.append({'x': image, 'side_seq': side, 'view_seq': view})
-            except Exception as e:
-                logger.warning(f"{type(e).__name__}: {e}")
-                logger.warning(f"{traceback.format_exc()}")
+                except Exception as e:
+                    logger.warning(f"{type(e).__name__}: {e}")
+                    logger.warning(f"{traceback.format_exc()}")
 
         risk_factor_vector = None
 

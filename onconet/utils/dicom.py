@@ -122,6 +122,12 @@ def dicom_to_image_dcmtk(dicom_path, image_path, pillow=False):
         return image
 
 
+def png_to_arr(png):
+    image = Image.open(png)
+    image = np.array(image).astype(np.int32)
+    return Image.fromarray(image, mode='I')
+
+
 def dicom_to_arr(dicom, window_method='minmax', index=0, pillow=False, overlay=False):
     logger = get_logger()
     image = apply_modality_lut(dicom.pixel_array, dicom)
